@@ -4,6 +4,11 @@ import {
   sendMessage,
   getMessages,
   markMessagesAsSeen,
+  deleteMessage,
+  editMessage,
+  getUnreadCounts,
+  getRecentConversations,
+  toggleReaction,
 } from "../controllers/messageController.js";
 import upload from "../middleware/uploadMiddleware.js";
 
@@ -25,9 +30,18 @@ router.post(
   sendMessage
 );
 
+router.get("/unread", authMiddleware, getUnreadCounts);
+
+router.get("/conversations/recent", authMiddleware, getRecentConversations);
+
+router.post("/:messageId/react", authMiddleware, toggleReaction);
+
+router.patch("/:messageId", authMiddleware, editMessage);
+
 router.get("/:receiverId", authMiddleware, getMessages);
 
 router.patch("/seen/:senderId", authMiddleware, markMessagesAsSeen);
 
+router.delete("/:messageId", authMiddleware, deleteMessage);
 
 export default router;

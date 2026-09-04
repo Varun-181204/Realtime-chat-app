@@ -43,10 +43,31 @@ const messageSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+
+    replyTo: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Message",
+      default: null,
+    },
+
+    reactions: [
+      {
+        user: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+        },
+        emoji: {
+          type: String,
+          required: true,
+        },
+      },
+    ],
   },
   {
     timestamps: true,
   }
 );
+
+messageSchema.index({ sender: 1, receiver: 1, createdAt: -1 });
 
 export default mongoose.model("Message", messageSchema);

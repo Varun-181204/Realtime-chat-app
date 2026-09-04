@@ -18,20 +18,11 @@ export const sendMessage = async (req, res) => {
       const document = req.files.document[0];
 
       console.log("========== DOCUMENT ==========");
-      console.log("Original Name:", document.originalname);
-      console.log("Mime Type:", document.mimetype);
-      console.log("Size:", document.size);
-      console.log("Buffer Length:", document.buffer.length);
-      console.log("==============================");
-
       const result = await new Promise((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream(
           {
             folder: "RealtimeChat/Documents",
             resource_type: "raw",
-            use_filename: true,
-            unique_filename: false,
-            overwrite: false,
           },
           (error, result) => {
             if (error) {
@@ -113,7 +104,10 @@ export const sendMessage = async (req, res) => {
       file: fileUrl,
       fileName,
       fileType,
+      replyTo: replyTo || null,
     });
+
+    await newMessage.populate("replyTo", "message sender image file fileName");
 
     console.log("========== NEW MESSAGE ==========");
     console.log(newMessage);
@@ -155,7 +149,9 @@ export const getMessages = async (req, res) => {
           receiver: req.user.id,
         },
       ],
-    }).sort({ createdAt: 1 });
+    })
+      .sort({ createdAt: 1 })
+      .populate("replyTo", "message sender image file fileName");
 
     res.json({
       success: true,
@@ -198,6 +194,238 @@ export const markMessagesAsSeen = async (req, res) => {
   } catch (error) {
     console.error("MARK SEEN ERROR:", error);
 
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+};
+
+export const getUnreadCounts = async (req, res) => {
+  try {
+    const unreadMessages = await Message.find({
+      receiver: req.user.id,
+      seen: false,
+    });
+
+    const unreadCounts = {};
+
+    unreadMessages.forEach((msg) => {
+      const senderId = String(msg.sender);
+
+      if (!unreadCounts[senderId]) {
+        unreadCounts[senderId] = 0;
+      }
+
+      unreadCounts[senderId]++;
+    });
+
+    res.status(200).json({
+      success: true,
+      data: unreadCounts,
+    });
+  } catch (error) {
+    console.error("GET UNREAD COUNTS ERROR:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+};
+
+export const deleteMessage = async (req, res) => {
+  try {
+    const { messageId } = req.params;
+
+    const message = await Message.findById(messageId);
+
+    if (!message) {
+      return res.status(404).json({
+        success: false,
+        message: "Message not found",
+      });
+    }
+
+    // Only the sender can delete the message
+    if (String(message.sender) !== String(req.user.id)) {
+      return res.status(403).json({
+        success: false,
+        message: "You can only delete your own messages",
+      });
+    }
+
+    await Message.findByIdAndDelete(messageId);
+
+    res.status(200).json({
+      success: true,
+      message: "Message deleted successfully",
+      messageId,
+    });
+  } catch (error) {
+    console.error("DELETE MESSAGE ERROR:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+};
+
+export const editMessage = async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const { message } = req.body;
+
+    if (!message?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Message cannot be empty",
+      });
+    }
+
+    const existingMessage = await Message.findById(messageId);
+
+    if (!existingMessage) {
+      return res.status(404).json({
+        success: false,
+        message: "Message not found",
+      });
+    }
+
+    // Only the sender can edit the message
+    if (
+      String(existingMessage.sender) !==
+      String(req.user.id)
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "You can only edit your own messages",
+      });
+    }
+
+    // Only text messages can be edited
+    if (existingMessage.image || existingMessage.file) {
+      return res.status(400).json({
+        success: false,
+        message: "Only text messages can be edited",
+      });
+    }
+
+    existingMessage.message = message.trim();
+
+    await existingMessage.save();
+
+    res.status(200).json({
+      success: true,
+      data: existingMessage,
+    });
+  } catch (error) {
+    console.error("EDIT MESSAGE ERROR:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+};
+
+export const getRecentConversations = async (req, res) => {
+  try {
+    const currentUserId = req.user.id || req.user.userId;
+
+    const messages = await Message.find({
+      $or: [{ sender: currentUserId }, { receiver: currentUserId }],
+    }).sort({ createdAt: -1 });
+
+    const recent = {};
+
+    messages.forEach((msg) => {
+      const otherId =
+        String(msg.sender) === String(currentUserId)
+          ? String(msg.receiver)
+          : String(msg.sender);
+
+      if (!recent[otherId]) {
+        recent[otherId] = {
+          message: msg.message,
+          image: !!msg.image,
+          file: !!msg.file,
+          fileName: msg.fileName,
+          createdAt: msg.createdAt,
+          sender: msg.sender,
+        };
+      }
+    });
+
+    res.status(200).json({
+      success: true,
+      data: recent,
+    });
+  } catch (error) {
+    console.error("GET RECENT CONVERSATIONS ERROR:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+};
+
+export const toggleReaction = async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const { emoji } = req.body;
+    const userId = req.user.id || req.user.userId;
+
+    if (!emoji) {
+      return res.status(400).json({
+        success: false,
+        message: "Emoji is required",
+      });
+    }
+
+    const message = await Message.findById(messageId);
+
+    if (!message) {
+      return res.status(404).json({
+        success: false,
+        message: "Message not found",
+      });
+    }
+
+    if (!message.reactions) {
+      message.reactions = [];
+    }
+
+    const existingIndex = message.reactions.findIndex(
+      (r) => String(r.user) === String(userId) && r.emoji === emoji
+    );
+
+    if (existingIndex > -1) {
+      message.reactions.splice(existingIndex, 1);
+    } else {
+      const userPrevIndex = message.reactions.findIndex(
+        (r) => String(r.user) === String(userId)
+      );
+
+      if (userPrevIndex > -1) {
+        message.reactions[userPrevIndex].emoji = emoji;
+      } else {
+        message.reactions.push({ user: userId, emoji });
+      }
+    }
+
+    await message.save();
+
+    res.status(200).json({
+      success: true,
+      data: {
+        messageId,
+        reactions: message.reactions,
+      },
+    });
+  } catch (error) {
+    console.error("TOGGLE REACTION ERROR:", error);
     res.status(500).json({
       success: false,
       message: "Server Error",
